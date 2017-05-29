@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-if [ -f $1/.buildpacks ]; then
-  echo "Multipack"
-  exit 0
+if [ -z "$BUILDPACK" ]; then
+    echo "Multipack looking for subdirectory"
+    exit 0
 else
-  echo "Missing .buildpacks file"
+  echo "Missing BUILDPACK config var"
   exit 1
 fi

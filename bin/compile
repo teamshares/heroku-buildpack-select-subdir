@@ -2,6 +2,11 @@
 
 set -e
 
+BUILD_DIR=${1:-}
+CACHE_DIR=${2:-}
+ENV_DIR=${3:-}
+BUILDPACK=$(cat $ENV_DIR/BUILDPACK)
+
 function indent() {
   c='s/^/       /'
   case $(uname) in
@@ -12,14 +17,29 @@ function indent() {
 
 unset GIT_DIR
 
-for BUILDPACK in $(cat $1/.buildpacks); do
+write_profile() {
+  local root_dir="$1"
+  # This assumes that Heroku initially looks for profiles at the $HOME folder, which it does
+  local subdir="$HOME/$2"
+  mkdir -p $root_dir/.profile.d
+
+  # Set the home directory to be the subdir and source all profiles that
+  # were placed here by the invoked buildpack
+  echo "export HOME=$subdir && source $subdir/.profile.d/*" > $root_dir/.profile.d/heroku-subdir-init.sh
+}
+
+
+# Looks for a buildpack argument with the format
+# subdir=https://github.com/my/buildpack.git
+execute_buildpack_at_subdir() {
+  local buildpack="$1"
   dir=$(mktemp -t buildpackXXXXX)
   rm -rf $dir
 
   subdir=""
-  if [[ $BUILDPACK == *'='* ]]; then
-    subdir=$(echo $BUILDPACK | cut -d"=" -f 1)
-    BUILDPACK=$(echo $BUILDPACK | cut -d"=" -f 2)
+  if [[ $buildpack == *'='* ]]; then
+    subdir=$(echo $buildpack | cut -d"=" -f 1)
+    BUILDPACK=$(echo $buildpack | cut -d"=" -f 2)
   fi
 
   url=${BUILDPACK%#*}
@@ -51,7 +71,7 @@ for BUILDPACK in $(cat $1/.buildpacks); do
     # Ensure that these files exist.
     chmod -f +x $dir/bin/{detect,compile,release} || true
 
-    framework=$($dir/bin/detect $1/$subdir)
+    framework=$($dir/bin/detect $BUILD_DIR/$subdir)
 
     if [ $? == 0 ]; then
       echo "=====> Detected Framework: $framework"
@@ -61,7 +81,7 @@ for BUILDPACK in $(cat $1/.buildpacks); do
       # echo "-----> Ls \$2: $(ls -la $2)"
       # echo "-----> Ls SUB_DIR(\$1/\$subdir): $(ls -la $1/$subdir)"
       # bin/compile BUILD_DIR CACHE_DIR ENV_DIR
-      $dir/bin/compile $1/$subdir $2 $3
+      $dir/bin/compile $BUILD_DIR/$subdir $CACHE_DIR $ENV_DIR
 
       if [ $? != 0 ]; then
         exit 1
@@ -73,15 +93,27 @@ for BUILDPACK in $(cat $1/.buildpacks); do
       fi
 
       if [ -x $dir/bin/release ]; then
-        $dir/bin/release $1/$subdir > $1/$subdir/last_pack_release.out
+        $dir/bin/release $BUILD_DIR/$subdir > $BUILD_DIR/$subdir/last_pack_release.out
       fi
+
+      # Copies the Procfile from the subdir to the root directory
+	  echo 'Copying Procfile...'
+      cp $BUILD_DIR/$subdir/Procfile $BUILD_DIR/
+
+      # Writes the profile file which initializes paths and sources
+      # other profile files
+	  echo 'Creating .profile.d...'
+      write_profile "$BUILD_DIR" "$subdir"
     else
       echo "Couldn't detect any framework for this buildpack. Exiting."
       exit 1
     fi
   fi
-done
+}
 
-if [[ -e $1/last_pack_release.out ]]; then
+# BUILDPACK should be set as a Heroku config var
+execute_buildpack_at_subdir "$BUILDPACK"
+
+if [[ -e $BUILD_DIR/last_pack_release.out ]]; then
   echo "Using release configuration from last framework ($framework)."
 fi

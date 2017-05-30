@@ -15,7 +15,7 @@ This buildpack assumes each subdirectory added above has a Procfile in it. It wi
 
 1. Run each app's specified buildpack at the corresponding subdirectory
 2. Copy the Procfile found at the specified subdirectory to the root
-3. Source all files added to the `.profile.d/` directory by the buildpack form 1.
+3. Source all files added to the `.profile.d/` directory by the buildpack from 1.
 
 This means each Procfile must contain something like
 ```web: cd <subdir> && npm start```

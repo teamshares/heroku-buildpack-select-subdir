@@ -32,6 +32,7 @@ write_profile() {
 
 # Looks for a buildpack argument with the format
 # subdir=https://github.com/my/buildpack.git
+
 execute_buildpack_at_subdir() {
   local buildpack="$1"
   dir=$(mktemp -t buildpackXXXXX)
@@ -40,81 +41,97 @@ execute_buildpack_at_subdir() {
   subdir=""
   if [[ $buildpack == *'='* ]]; then
     subdir=$(echo $buildpack | cut -d"=" -f 1)
-    BUILDPACK=$(echo $buildpack | cut -d"=" -f 2)
+    buildpacks=$(echo $buildpack | cut -d"=" -f 2)
   fi
 
-  url=${BUILDPACK%#*}
-  branch=${BUILDPACK#*#}
+  # Set comma as delimiter
+  IFS=','
 
-  if [ "$branch" == "$url" ]; then
-    branch=""
-  fi
+  #Read the buildpacks into an array based on comma delimiter
+  read -a strarr <<< $buildpacks
 
-  if [ "$url" != "" ]; then
-    echo "=====> Downloading Buildpack: $url, branch: $branch, to tmp dir $dir, against source's subdir: $subdir"
+  #Count the total words
+  echo "There are ${#strarr[*]} words in the text."
 
-    if [[ "$url" =~ \.tgz$ ]] || [[ "$url" =~ \.tgz\? ]]; then
-      mkdir -p "$dir"
-      curl -s "$url" | tar xvz -C "$dir" >/dev/null 2>&1
-    else
-      git clone $url $dir >/dev/null 2>&1
-      if [ -f "$dir/.gitmodules" ]; then
-        echo "=====> Detected git submodules. Initializing..."
-        (cd $dir && git submodule update --init --recursive)
+  # Print each value of the array by using the loop
+  for BUILDPACK in "${strarr[@]}";
+  do
+    printf "$val\n"
+
+    url=${BUILDPACK%#*}
+    branch=${BUILDPACK#*#}
+
+    if [ "$branch" == "$url" ]; then
+      branch=""
+    fi
+
+    if [ "$url" != "" ]; then
+      echo "=====> Downloading Buildpack: $url, branch: $branch, to tmp dir $dir, against source's subdir: $subdir"
+
+      if [[ "$url" =~ \.tgz$ ]] || [[ "$url" =~ \.tgz\? ]]; then
+        mkdir -p "$dir"
+        curl -s "$url" | tar xvz -C "$dir" >/dev/null 2>&1
+      else
+        git clone $url $dir >/dev/null 2>&1
+        if [ -f "$dir/.gitmodules" ]; then
+          echo "=====> Detected git submodules. Initializing..."
+          (cd $dir && git submodule update --init --recursive)
+        fi
       fi
-    fi
-    cd $dir
+      cd $dir
 
-    if [ "$branch" != "" ]; then
-      git checkout $branch >/dev/null 2>&1
-    fi
+      if [ "$branch" != "" ]; then
+        git checkout $branch >/dev/null 2>&1
+      fi
 
-    # Ensure that these files exist.
-    chmod -f +x $dir/bin/{detect,compile,release} || true
+      # Ensure that these files exist.
+      chmod -f +x $dir/bin/{detect,compile,release} || true
 
-    framework=$($dir/bin/detect $BUILD_DIR/$subdir)
+      # framework=$($dir/bin/detect $BUILD_DIR/$subdir)
 
-    if [ $? == 0 ]; then
-      echo "=====> Detected Framework: $framework"
-      # echo "-----> Compiling with BUILD_DIR: $1, SUB_DIR: $subdir"
-      # echo "-----> Ls BUILD_DIR: $(ls -la $1)"
-      # echo "-----> Ls \$3: $(ls -la $3)"
-      # echo "-----> Ls \$2: $(ls -la $2)"
-      # echo "-----> Ls SUB_DIR(\$1/\$subdir): $(ls -la $1/$subdir)"
-      # bin/compile BUILD_DIR CACHE_DIR ENV_DIR
-      $dir/bin/compile $BUILD_DIR/$subdir $CACHE_DIR $ENV_DIR
+      if [ $? == 0 ]; then
+        # echo "=====> Detected Framework: $framework"
+        # echo "-----> Compiling with BUILD_DIR: $1, SUB_DIR: $subdir"
+        # echo "-----> Ls BUILD_DIR: $(ls -la $1)"
+        # echo "-----> Ls \$3: $(ls -la $3)"
+        # echo "-----> Ls \$2: $(ls -la $2)"
+        # echo "-----> Ls SUB_DIR(\$1/\$subdir): $(ls -la $1/$subdir)"
+        # bin/compile BUILD_DIR CACHE_DIR ENV_DIR
+        $dir/bin/compile $BUILD_DIR/$subdir $CACHE_DIR $ENV_DIR
 
-      if [ $? != 0 ]; then
+        if [ $? != 0 ]; then
+          exit 1
+        fi
+
+        # check if the buildpack left behind an environment for subsequent ones
+        if [ -e $dir/export ]; then
+          source $dir/export
+        fi
+
+        if [ -x $dir/bin/release ]; then
+          $dir/bin/release $BUILD_DIR/$subdir > $BUILD_DIR/$subdir/last_pack_release.out
+        fi
+
+      else
+        echo "Couldn't detect any framework for this buildpack. Exiting."
         exit 1
       fi
-
-      # check if the buildpack left behind an environment for subsequent ones
-      if [ -e $dir/export ]; then
-        source $dir/export
-      fi
-
-      if [ -x $dir/bin/release ]; then
-        $dir/bin/release $BUILD_DIR/$subdir > $BUILD_DIR/$subdir/last_pack_release.out
-      fi
-
-      # Copies the Procfile from the subdir to the root directory
-	  echo 'Copying Procfile...'
-      cp $BUILD_DIR/$subdir/Procfile $BUILD_DIR/
-
-      # Writes the profile file which initializes paths and sources
-      # other profile files
-	  echo 'Creating .profile.d...'
-      write_profile "$BUILD_DIR" "$subdir"
-    else
-      echo "Couldn't detect any framework for this buildpack. Exiting."
-      exit 1
     fi
-  fi
+  done
+
+  # Copies the Procfile from the subdir to the root directory
+  echo 'Copying Procfile...'
+  cp $BUILD_DIR/$subdir/Procfile $BUILD_DIR/
+
+  # Writes the profile file which initializes paths and sources
+  # other profile files
+  echo 'Creating .profile.d...'
+  write_profile "$BUILD_DIR" "$subdir"
 }
 
 # BUILDPACK should be set as a Heroku config var
 execute_buildpack_at_subdir "$BUILDPACK"
 
-if [[ -e $BUILD_DIR/last_pack_release.out ]]; then
-  echo "Using release configuration from last framework ($framework)."
-fi
+# if [[ -e $BUILD_DIR/last_pack_release.out ]]; then
+#   echo "Using release configuration from last framework ($framework)."
+# fi

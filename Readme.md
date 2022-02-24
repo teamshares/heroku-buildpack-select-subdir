@@ -1,3 +1,3 @@
 # DEPRECATED
 
-Note this has been superceded by https://github.com/teamshares/teamshares-monorepo-buildpack
+Note this has been superseded by https://github.com/teamshares/teamshares-monorepo-buildpack
